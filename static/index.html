@@ -931,6 +931,8 @@
       renderSimulation(hash.slice(4));
     } else if (hash.startsWith('neighborhood/')) {
       renderNeighborhood(hash.slice('neighborhood/'.length));
+    } else if (hash.startsWith('prison/')) {
+      renderPrisonYard(hash.slice('prison/'.length));
     } else if (routes[hash]) {
       routes[hash]();
     } else {
@@ -1248,7 +1250,10 @@
   }
 
   async function renderPrisonResults(sim) {
-    let html = '';
+    let html = `
+      <div style="margin-bottom:20px;">
+        <a href="#/prison/${esc(sim.id)}" class="btn btn-primary">View Prison Yard</a>
+      </div>`;
 
     // Analysis report
     if (sim.summary) {
@@ -1708,15 +1713,18 @@
 
       function drawTooltip(agent) {
         const text = agent.response;
-        const maxW = 220;
-        const padding = 10;
-        const lineH = 14;
+        const maxW = 240;
+        const padX = 14;
+        const padTop = 12;
+        const padBottom = 12;
+        const lineH = 16;
         const bubbleX = agent.x;
         const s = AGENT_DISPLAY_SIZE;
+        const edgeMargin = 8;
 
         p.textSize(11);
         p.textFont('monospace');
-        const maxTextW = maxW - padding * 2;
+        const maxTextW = maxW - padX * 2;
         const words = text.split(' ');
         let lines = [];
         let currentLine = '';
@@ -1745,11 +1753,11 @@
         if (currentLine) lines.push(currentLine);
 
         const bubbleW = maxW;
-        const bubbleH = lines.length * lineH + padding * 2;
-        const bubbleY = agent.y - s / 2 - bubbleH - 12;
+        const bubbleH = lines.length * lineH + padTop + padBottom;
+        const bubbleY = agent.y - s / 2 - bubbleH - 14;
 
-        const bx = p.constrain(bubbleX - bubbleW / 2, 4, canvasW - bubbleW - 4);
-        const by = Math.max(4, bubbleY);
+        const bx = p.constrain(bubbleX - bubbleW / 2, edgeMargin, canvasW - bubbleW - edgeMargin);
+        const by = Math.max(edgeMargin, bubbleY);
 
         p.push();
         p.noStroke();
@@ -1779,7 +1787,344 @@
         p.textAlign(p.LEFT, p.TOP);
         p.textSize(11);
         for (let i = 0; i < lines.length; i++) {
-          p.text(lines[i], bx + padding, by + padding + i * lineH);
+          p.text(lines[i], bx + padX, by + padTop + i * lineH);
+        }
+        p.pop();
+      }
+    };
+
+    p5Instance = new p5(sketch, document.getElementById('p5-container'));
+  }
+
+  async function renderPrisonYard(simId) {
+    const app = document.getElementById('app');
+    app.innerHTML = '<div class="loading"><div class="spinner"></div>Loading prison yard...</div>';
+
+    let agentData = [];
+    try {
+      const agents = await api('/simulations/' + simId + '/agents');
+      agentData = agents.filter(a =>
+        a.persona && (a.persona.role === 'guard' || a.persona.role === 'prisoner')
+      ).slice(0, 8);
+    } catch (e) {
+      app.innerHTML = `
+        <div class="view-header">
+          <a href="#/sim/${esc(simId)}" class="back-link">&larr; Back to Simulation</a>
+          <h2>Prison Yard</h2>
+        </div>
+        <div class="empty-state"><h3>Could not load agents</h3><p>Make sure the simulation has completed.</p></div>`;
+      return;
+    }
+
+    if (agentData.length === 0) {
+      app.innerHTML = `
+        <div class="view-header">
+          <a href="#/sim/${esc(simId)}" class="back-link">&larr; Back to Simulation</a>
+          <h2>Prison Yard</h2>
+        </div>
+        <div class="empty-state"><h3>No agents found</h3><p>This simulation has no guard or prisoner agents.</p></div>`;
+      return;
+    }
+
+    const guardCount = agentData.filter(a => a.persona.role === 'guard').length;
+    const prisonerCount = agentData.filter(a => a.persona.role === 'prisoner').length;
+
+    app.innerHTML = `
+      <div class="view-header" style="margin-bottom:16px;">
+        <a href="#/sim/${esc(simId)}" class="back-link">&larr; Back to Simulation</a>
+        <h2>Prison Yard</h2>
+        <p>${guardCount} guard${guardCount !== 1 ? 's' : ''} and ${prisonerCount} prisoner${prisonerCount !== 1 ? 's' : ''} in the yard</p>
+      </div>
+      <div id="p5-container" style="border-radius:var(--radius);overflow:hidden;border:1px solid var(--border);"></div>`;
+
+    const sketch = function(p) {
+      let bgImg;
+      let sprites = [];
+      let agents = [];
+      let canvasW, canvasH;
+      const NUM_SPRITES = 8;
+      const AGENT_DISPLAY_SIZE = 48;
+      const HIT_RADIUS = 28;
+      const MOVE_SPEED = 0.8;
+      const WANDER_RADIUS = 80;
+
+      p.preload = function() {
+        bgImg = p.loadImage('/assets/sprites/background-prison.jpeg');
+        for (let i = 1; i <= NUM_SPRITES; i++) {
+          sprites.push(p.loadImage('/assets/sprites/' + i + '.png'));
+        }
+      };
+
+      p.setup = function() {
+        const container = document.getElementById('p5-container');
+        canvasW = Math.max(Math.min(container.offsetWidth, 950), 300);
+        canvasH = Math.round(canvasW * (bgImg.height / bgImg.width));
+        const canvas = p.createCanvas(canvasW, canvasH);
+        canvas.parent('p5-container');
+        p.imageMode(p.CORNER);
+        p.textFont('monospace');
+        p.frameRate(30);
+
+        bgImg.loadPixels();
+
+        for (let i = 0; i < agentData.length; i++) {
+          const ad = agentData[i];
+          const sprite = sprites[i % sprites.length];
+          const role = ad.persona.role;
+          let ax, ay;
+          let attempts = 0;
+          do {
+            ax = p.random(AGENT_DISPLAY_SIZE, canvasW - AGENT_DISPLAY_SIZE);
+            ay = p.random(AGENT_DISPLAY_SIZE, canvasH - AGENT_DISPLAY_SIZE);
+            attempts++;
+          } while (!isWalkable(ax, ay) && attempts < 500);
+
+          agents.push({
+            x: ax,
+            y: ay,
+            targetX: ax,
+            targetY: ay,
+            speed: MOVE_SPEED + p.random(-0.2, 0.2),
+            sprite: sprite,
+            state: 'CHOOSING',
+            pauseTimer: 0,
+            hovering: false,
+            role: role,
+            response: ad.output_text || (ad.persona && ad.persona.background_description) || 'No response recorded.',
+            name: (ad.persona && ad.persona.name) || ad.agent_name || ('Agent ' + (i + 1)),
+            roleId: (ad.persona && ad.persona.role_id) || '',
+          });
+        }
+      };
+
+      function isWalkable(px, py) {
+        const imgX = Math.floor((px / canvasW) * bgImg.width);
+        const imgY = Math.floor((py / canvasH) * bgImg.height);
+        if (imgX < 0 || imgX >= bgImg.width || imgY < 0 || imgY >= bgImg.height) return false;
+        const idx = (imgY * bgImg.width + imgX) * 4;
+        const r = bgImg.pixels[idx];
+        const g = bgImg.pixels[idx + 1];
+        const b = bgImg.pixels[idx + 2];
+        // Green grass areas
+        if (g > r && g > b && g > 80) return true;
+        // Light gray concrete/pavement
+        const avg = (r + g + b) / 3;
+        const maxDiff = Math.max(Math.abs(r - g), Math.abs(r - b), Math.abs(g - b));
+        if (avg > 140 && avg < 210 && maxDiff < 30) return true;
+        return false;
+      }
+
+      function pickWanderTarget(agent) {
+        let tx, ty;
+        let attempts = 0;
+        do {
+          const angle = p.random(p.TWO_PI);
+          const dist = p.random(40, WANDER_RADIUS);
+          tx = agent.x + Math.cos(angle) * dist;
+          ty = agent.y + Math.sin(angle) * dist;
+          tx = p.constrain(tx, AGENT_DISPLAY_SIZE, canvasW - AGENT_DISPLAY_SIZE);
+          ty = p.constrain(ty, AGENT_DISPLAY_SIZE, canvasH - AGENT_DISPLAY_SIZE);
+          attempts++;
+        } while (!isWalkable(tx, ty) && attempts < 100);
+        if (!isWalkable(tx, ty)) {
+          tx = agent.x;
+          ty = agent.y;
+        }
+        return { x: tx, y: ty };
+      }
+
+      p.draw = function() {
+        p.image(bgImg, 0, 0, canvasW, canvasH);
+
+        for (const agent of agents) {
+          if (!agent.hovering) {
+            updateAgent(agent);
+          }
+          drawAgent(agent);
+        }
+
+        for (const agent of agents) {
+          if (agent.hovering) {
+            drawTooltip(agent);
+          }
+        }
+      };
+
+      function updateAgent(agent) {
+        switch (agent.state) {
+          case 'CHOOSING': {
+            const target = pickWanderTarget(agent);
+            agent.targetX = target.x;
+            agent.targetY = target.y;
+            agent.state = 'MOVING';
+            break;
+          }
+          case 'MOVING': {
+            const dx = agent.targetX - agent.x;
+            const dy = agent.targetY - agent.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist < 2) {
+              agent.x = agent.targetX;
+              agent.y = agent.targetY;
+              agent.pauseTimer = p.floor(p.random(120, 240));
+              agent.state = 'PAUSING';
+            } else {
+              agent.x += (dx / dist) * agent.speed;
+              agent.y += (dy / dist) * agent.speed;
+            }
+            break;
+          }
+          case 'PAUSING': {
+            agent.pauseTimer--;
+            if (agent.pauseTimer <= 0) {
+              agent.state = 'CHOOSING';
+            }
+            break;
+          }
+        }
+      }
+
+      function drawAgent(agent) {
+        const d = p.dist(p.mouseX, p.mouseY, agent.x, agent.y);
+        const wasHovering = agent.hovering;
+        agent.hovering = d < HIT_RADIUS;
+
+        if (wasHovering && !agent.hovering) {
+          agent.state = 'CHOOSING';
+        }
+
+        const s = AGENT_DISPLAY_SIZE;
+        p.push();
+        if (agent.hovering) {
+          p.tint(255, 255, 200);
+        }
+        p.image(agent.sprite, agent.x - s / 2, agent.y - s / 2, s, s);
+        p.pop();
+
+        // Role badge background
+        const isGuard = agent.role === 'guard';
+        const badgeColor = isGuard ? [245, 158, 11] : [239, 68, 68]; // amber / red
+        const firstName = agent.name.split(' ')[0];
+        const label = firstName;
+
+        p.push();
+        p.textSize(10);
+        p.textFont('monospace');
+        const labelW = p.textWidth(label) + 8;
+        const labelH = 16;
+        const labelX = agent.x - labelW / 2;
+        const labelY = agent.y + s / 2 + 2;
+
+        // Badge background
+        p.noStroke();
+        p.fill(badgeColor[0], badgeColor[1], badgeColor[2], 200);
+        p.rect(labelX, labelY, labelW, labelH, 3);
+
+        // Label text
+        p.fill(255);
+        p.noStroke();
+        p.textAlign(p.CENTER, p.TOP);
+        p.text(label, agent.x, labelY + 2);
+        p.pop();
+      }
+
+      function drawTooltip(agent) {
+        const isGuard = agent.role === 'guard';
+        const roleLabel = isGuard ? 'Guard' : 'Prisoner';
+        const roleColor = isGuard ? [245, 158, 11] : [239, 68, 68];
+        const headerText = roleLabel + (agent.roleId ? ' — ' + agent.roleId : '');
+        const text = agent.response;
+        const maxW = 240;
+        const padX = 14;
+        const padTop = 12;
+        const padBottom = 12;
+        const lineH = 16;
+        const headerH = 22;
+        const bubbleX = agent.x;
+        const s = AGENT_DISPLAY_SIZE;
+        const edgeMargin = 8;
+
+        p.textSize(11);
+        p.textFont('monospace');
+        const maxTextW = maxW - padX * 2;
+        const words = text.split(' ');
+        let lines = [];
+        let currentLine = '';
+        for (const word of words) {
+          let w = word;
+          if (p.textWidth(w) > maxTextW) {
+            while (p.textWidth(w + '...') > maxTextW && w.length > 1) {
+              w = w.slice(0, -1);
+            }
+            w = w + '...';
+          }
+          const testLine = currentLine ? currentLine + ' ' + w : w;
+          if (p.textWidth(testLine) > maxTextW) {
+            if (currentLine) lines.push(currentLine);
+            currentLine = w;
+          } else {
+            currentLine = testLine;
+          }
+          if (lines.length >= 5) {
+            lines[lines.length - 1] = lines[lines.length - 1] + '...';
+            currentLine = '';
+            break;
+          }
+        }
+        if (currentLine) lines.push(currentLine);
+
+        const bubbleW = maxW;
+        const bubbleH = headerH + lines.length * lineH + padTop + padBottom;
+        const bubbleY = agent.y - s / 2 - bubbleH - 14;
+
+        const bx = p.constrain(bubbleX - bubbleW / 2, edgeMargin, canvasW - bubbleW - edgeMargin);
+        const by = Math.max(edgeMargin, bubbleY);
+
+        p.push();
+        // Shadow
+        p.noStroke();
+        p.fill(0, 0, 0, 40);
+        p.rect(bx + 3, by + 3, bubbleW, bubbleH, 6);
+
+        // Bubble background
+        p.fill(255, 255, 245);
+        p.stroke(60);
+        p.strokeWeight(2);
+        p.rect(bx, by, bubbleW, bubbleH, 6);
+
+        // Role header bar
+        p.noStroke();
+        p.fill(roleColor[0], roleColor[1], roleColor[2], 220);
+        p.rect(bx + 1, by + 1, bubbleW - 2, headerH, 5, 5, 0, 0);
+        p.fill(255);
+        p.noStroke();
+        p.textAlign(p.LEFT, p.TOP);
+        p.textSize(10);
+        p.textStyle(p.BOLD);
+        p.text(headerText, bx + padX, by + 5);
+        p.textStyle(p.NORMAL);
+
+        // Tail
+        const tailX = p.constrain(bubbleX, bx + 10, bx + bubbleW - 10);
+        p.fill(255, 255, 245);
+        p.stroke(60);
+        p.strokeWeight(2);
+        p.triangle(
+          tailX - 6, by + bubbleH,
+          tailX + 6, by + bubbleH,
+          tailX, by + bubbleH + 8
+        );
+        p.noStroke();
+        p.fill(255, 255, 245);
+        p.rect(tailX - 5, by + bubbleH - 2, 10, 3);
+
+        // Body text
+        p.fill(30);
+        p.noStroke();
+        p.textAlign(p.LEFT, p.TOP);
+        p.textSize(11);
+        for (let i = 0; i < lines.length; i++) {
+          p.text(lines[i], bx + padX, by + headerH + padTop + i * lineH);
         }
         p.pop();
       }
