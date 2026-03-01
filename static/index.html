@@ -692,6 +692,149 @@
       margin: 28px 0 14px;
     }
 
+    /* === PRISON EXPERIMENT === */
+    .prison-role-group {
+      margin-bottom: 24px;
+    }
+
+    .prison-role-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+
+    .prison-role-header .role-icon {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+    }
+
+    .prison-role-header .role-icon.guard {
+      background: var(--amber-dim);
+      color: var(--amber);
+    }
+
+    .prison-role-header .role-icon.prisoner {
+      background: var(--red-dim);
+      color: var(--red);
+    }
+
+    .badge-guard {
+      background: var(--amber-dim);
+      color: var(--amber);
+    }
+
+    .badge-prisoner {
+      background: var(--red-dim);
+      color: var(--red);
+    }
+
+    .badge-action {
+      background: var(--cyan-dim);
+      color: var(--cyan);
+    }
+
+    .badge-response {
+      background: rgba(168, 85, 247, 0.15);
+      color: #a855f7;
+    }
+
+    .badge-emotion {
+      background: var(--muted-dim);
+      color: var(--muted);
+      font-style: italic;
+    }
+
+    .interaction-timeline {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .interaction-phase-group {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+
+    .interaction-phase-header {
+      background: rgba(15, 20, 35, 0.6);
+      padding: 10px 16px;
+      font-weight: 600;
+      font-size: 13px;
+      color: var(--cyan);
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .interaction-phase-header:hover {
+      background: rgba(20, 28, 50, 0.8);
+    }
+
+    .interaction-phase-body {
+      display: none;
+      padding: 0;
+    }
+
+    .interaction-phase-body.expanded {
+      display: block;
+    }
+
+    .interaction-entry {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+    }
+
+    .interaction-entry:last-child {
+      border-bottom: none;
+    }
+
+    .interaction-actors {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+
+    .interaction-arrow {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .interaction-badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 6px;
+    }
+
+    .interaction-desc {
+      color: var(--text-secondary);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .prison-agent-avatar.guard {
+      background: var(--amber-dim);
+      color: var(--amber);
+      border: 1px solid rgba(245, 158, 11, 0.3);
+    }
+
+    .prison-agent-avatar.prisoner {
+      background: var(--red-dim);
+      color: var(--red);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+    }
+
     /* === RESPONSIVE === */
     @media (max-width: 640px) {
       #navbar { padding: 0 16px; }
@@ -1067,6 +1210,10 @@
   }
 
   async function renderResults(sim) {
+    if (sim.simulation_type === 'stanford_prison') {
+      return await renderPrisonResults(sim);
+    }
+
     let neighborhoodLink = `
       <div style="margin-bottom:20px;">
         <a href="#/neighborhood/${esc(sim.id)}" class="btn btn-primary">View Neighborhood</a>
@@ -1098,6 +1245,156 @@
     } catch {}
 
     return neighborhoodLink + reportHtml + agentsHtml;
+  }
+
+  async function renderPrisonResults(sim) {
+    let html = '';
+
+    // Analysis report
+    if (sim.summary) {
+      html += `
+        <div class="section-title">Behavioral Analysis Report</div>
+        <div class="report-panel">
+          <div class="report-content">${simpleMarkdown(sim.summary)}</div>
+        </div>`;
+    }
+
+    // Agents grouped by role
+    try {
+      const agents = await api('/simulations/' + sim.id + '/agents');
+      const guards = agents.filter(a => a.persona && a.persona.role === 'guard');
+      const prisoners = agents.filter(a => a.persona && a.persona.role === 'prisoner');
+
+      if (guards.length > 0) {
+        html += `
+          <div class="prison-role-group">
+            <div class="prison-role-header">
+              <div class="role-icon guard">&#x1f6e1;</div>
+              <div class="section-title" style="margin:0">Guards (${guards.length})</div>
+            </div>
+            <div class="agent-cards">
+              ${guards.map(a => renderPrisonAgentCard(a, 'guard')).join('')}
+            </div>
+          </div>`;
+      }
+
+      if (prisoners.length > 0) {
+        html += `
+          <div class="prison-role-group">
+            <div class="prison-role-header">
+              <div class="role-icon prisoner">&#x26d3;</div>
+              <div class="section-title" style="margin:0">Prisoners (${prisoners.length})</div>
+            </div>
+            <div class="agent-cards">
+              ${prisoners.map(a => renderPrisonAgentCard(a, 'prisoner')).join('')}
+            </div>
+          </div>`;
+      }
+    } catch {}
+
+    // Interaction timeline
+    try {
+      const interactions = await api('/simulations/' + sim.id + '/interactions');
+      if (interactions.length > 0) {
+        // Group by interaction_type (phase)
+        const phaseGroups = {};
+        interactions.forEach(ix => {
+          const phase = ix.interaction_type || 'unknown';
+          if (!phaseGroups[phase]) phaseGroups[phase] = [];
+          phaseGroups[phase].push(ix);
+        });
+
+        let timelineHtml = '';
+        for (const [phase, entries] of Object.entries(phaseGroups)) {
+          const phaseName = phase.replace('prison_', '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+          timelineHtml += `
+            <div class="interaction-phase-group">
+              <div class="interaction-phase-header" onclick="this.nextElementSibling.classList.toggle('expanded')">
+                <span>${esc(phaseName)} (${entries.length} interactions)</span>
+                <span class="chevron">&#9660;</span>
+              </div>
+              <div class="interaction-phase-body">
+                ${entries.map(ix => renderInteractionEntry(ix)).join('')}
+              </div>
+            </div>`;
+        }
+
+        html += `
+          <div class="section-title">Interaction Timeline</div>
+          <div class="interaction-timeline">${timelineHtml}</div>`;
+      }
+    } catch {}
+
+    return html;
+  }
+
+  function renderPrisonAgentCard(agent, role) {
+    const persona = agent.persona || {};
+    const name = persona.name || agent.agent_name || 'Agent';
+    const roleId = persona.role_id || agent.agent_name || '';
+    const initials = name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+
+    const detailFields = ['age', 'major', 'hometown', 'socioeconomic_background'];
+    const details = detailFields
+      .filter(f => persona[f])
+      .map(f => {
+        const label = f.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+        return `<div><div class="persona-detail-label">${esc(label)}</div><div class="persona-detail-value">${esc(String(persona[f]))}</div></div>`;
+      }).join('');
+
+    const bgDesc = persona.background_description || '';
+
+    return `
+      <div class="agent-card">
+        <div class="agent-card-header">
+          <div class="agent-persona-summary">
+            <div class="agent-avatar prison-agent-avatar ${esc(role)}">${esc(initials)}</div>
+            <div>
+              <div class="agent-name">${esc(name)}</div>
+              <div class="agent-occupation">${esc(roleId)}</div>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span class="badge badge-${esc(role)}">${esc(role)}</span>
+            <span class="chevron">&#9660;</span>
+          </div>
+        </div>
+        <div class="agent-card-body">
+          ${details ? `<div class="persona-details">${details}</div>` : ''}
+          ${bgDesc ? `<div class="agent-response">${esc(bgDesc)}</div>` : ''}
+        </div>
+      </div>`;
+  }
+
+  function renderInteractionEntry(ix) {
+    const payload = ix.payload || {};
+    const response = ix.response || {};
+
+    const guardAction = payload.action || 'unknown';
+    const guardDesc = payload.description || '';
+    const prisonerResponse = response.response || 'unknown';
+    const prisonerDesc = response.description || '';
+    const emotionalState = response.emotional_state || '';
+
+    const guardTarget = payload.target_prisoner || '?';
+
+    return `
+      <div class="interaction-entry">
+        <div class="interaction-actors">
+          <span class="badge badge-guard">${esc(ix.initiator_agent_id ? ix.initiator_agent_id.slice(0, 8) : '?')}</span>
+          <span class="interaction-arrow">&rarr;</span>
+          <span class="badge badge-prisoner">${esc(guardTarget)}</span>
+        </div>
+        <div class="interaction-badges">
+          <span class="badge badge-action">${esc(guardAction)}</span>
+          <span class="badge badge-response">${esc(prisonerResponse)}</span>
+          ${emotionalState ? `<span class="badge badge-emotion">${esc(emotionalState)}</span>` : ''}
+        </div>
+        <div class="interaction-desc">
+          <strong>Guard:</strong> ${esc(guardDesc)}<br>
+          <strong>Prisoner:</strong> ${esc(prisonerDesc)}
+        </div>
+      </div>`;
   }
 
   function renderAgentCard(agent) {
@@ -1243,20 +1540,21 @@
 
     // Launch p5 sketch
     const sketch = function(p) {
-      let bgImg, spriteSheet;
+      let bgImg;
       let sprites = [];
       let agents = [];
       let canvasW, canvasH;
-      const SPRITE_COLS = 4;
-      const SPRITE_ROWS = 2;
+      const NUM_SPRITES = 8;
       const AGENT_DISPLAY_SIZE = 48;
       const HIT_RADIUS = 28;
       const MOVE_SPEED = 0.8;
       const WANDER_RADIUS = 80;
 
       p.preload = function() {
-        bgImg = p.loadImage('/static/WhatsApp%20Image%202026-03-01%20at%201.05.27%20PM.jpeg');
-        spriteSheet = p.loadImage('/static/WhatsApp%20Image%202026-03-01%20at%201.13.01%20PM.jpeg');
+        bgImg = p.loadImage('/assets/sprites/background.png');
+        for (let i = 1; i <= NUM_SPRITES; i++) {
+          sprites.push(p.loadImage('/assets/sprites/' + i + '.png'));
+        }
       };
 
       p.setup = function() {
@@ -1268,15 +1566,6 @@
         p.imageMode(p.CORNER);
         p.textFont('monospace');
         p.frameRate(30);
-
-        // Slice sprite sheet into individual character sprites
-        const sw = spriteSheet.width / SPRITE_COLS;
-        const sh = spriteSheet.height / SPRITE_ROWS;
-        for (let row = 0; row < SPRITE_ROWS; row++) {
-          for (let col = 0; col < SPRITE_COLS; col++) {
-            sprites.push(spriteSheet.get(col * sw, row * sh, sw, sh));
-          }
-        }
 
         // Load background pixels for grass detection
         bgImg.loadPixels();
