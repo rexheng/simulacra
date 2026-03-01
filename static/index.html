@@ -1067,6 +1067,11 @@
   }
 
   async function renderResults(sim) {
+    let neighborhoodLink = `
+      <div style="margin-bottom:20px;">
+        <a href="#/neighborhood/${esc(sim.id)}" class="btn btn-primary">View Neighborhood</a>
+      </div>`;
+
     let reportHtml = '';
     if (sim.summary) {
       reportHtml = `
@@ -1092,7 +1097,7 @@
       }
     } catch {}
 
-    return reportHtml + agentsHtml;
+    return neighborhoodLink + reportHtml + agentsHtml;
   }
 
   function renderAgentCard(agent) {
